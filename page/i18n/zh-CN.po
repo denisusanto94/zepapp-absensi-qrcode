@@ -1,0 +1,2 @@
+msgid "appName"
+msgstr "考勤二维码"
