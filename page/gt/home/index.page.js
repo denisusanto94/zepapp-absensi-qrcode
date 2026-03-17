@@ -22,6 +22,9 @@ Page({
     gpsText: null,
     geolocation: null,
     qrTimer: null,
+    gpsCheckInterval: null,
+    gpsTimeoutHandle: null,
+    gpsStartTime: null,
     latitude: null,
     longitude: null
   },
@@ -246,11 +249,60 @@ Page({
     });
   },
 
+  stopGPSAndClearTimers() {
+    if (this.state.gpsCheckInterval) {
+      clearInterval(this.state.gpsCheckInterval);
+      this.state.gpsCheckInterval = null;
+    }
+    if (this.state.gpsTimeoutHandle) {
+      clearTimeout(this.state.gpsTimeoutHandle);
+      this.state.gpsTimeoutHandle = null;
+    }
+    if (this.state.geolocation) {
+      this.state.geolocation.stop();
+    }
+  },
+
+  applyGPSResult(lat, lon, isEstimated) {
+    if (!lat || !lon || lat === 0 || lon === 0) return false;
+    this.state.latitude = Number(lat).toFixed(6);
+    this.state.longitude = Number(lon).toFixed(6);
+    this.stopGPSAndClearTimers();
+    if (this.state.gpsText) {
+      this.state.gpsText.setProperty(hmUI.prop.COLOR, 0x4caf50);
+      const label = isEstimated ? "(perkiraan) " : "";
+      this.state.gpsText.setProperty(
+        hmUI.prop.TEXT,
+        label + `${this.state.latitude}, ${this.state.longitude}`
+      );
+    }
+    logger.debug(`GPS acquired: ${this.state.latitude}, ${this.state.longitude}`);
+    return true;
+  },
+
+  checkGPSFix() {
+    if (!this.state.geolocation || (this.state.latitude && this.state.longitude)) return;
+    const status = this.state.geolocation.getStatus();
+    const lat = this.state.geolocation.getLatitude();
+    const lon = this.state.geolocation.getLongitude();
+    logger.debug(`GPS check: status=${status}, lat=${lat}, lon=${lon}`);
+    if (lat == null || lon == null || lat === 0 || lon === 0) return;
+    if (status === "A") {
+      this.applyGPSResult(lat, lon, false);
+      return;
+    }
+    const elapsed = this.state.gpsStartTime ? Date.now() - this.state.gpsStartTime : 0;
+    if (status === "V" && elapsed >= 20000) {
+      this.applyGPSResult(lat, lon, true);
+    }
+  },
+
   searchGPS() {
     logger.debug("GPS search triggered");
-    
+    this.stopGPSAndClearTimers();
+
     if (this.state.gpsText) {
-      this.state.gpsText.setProperty(hmUI.prop.TEXT, "Mencari satelit...");
+      this.state.gpsText.setProperty(hmUI.prop.TEXT, "Mencari sinyal... (dalam ruangan: tunggu/dekat jendela)");
       this.state.gpsText.setProperty(hmUI.prop.COLOR, 0xffc107);
     }
 
@@ -258,75 +310,70 @@ Page({
       if (!this.state.geolocation) {
         this.state.geolocation = new Geolocation();
       }
-      
+      this.state.gpsStartTime = Date.now();
       this.state.geolocation.start();
       logger.debug("GPS sensor started");
-      
+
       this.state.geolocation.onChange(() => {
+        this.checkGPSFix();
+      });
+
+      const GPS_POLL_INTERVAL = 2500;
+      const GPS_TIMEOUT_MS = 90000;
+
+      this.state.gpsCheckInterval = setInterval(() => {
+        this.checkGPSFix();
+        const lat = this.state.geolocation.getLatitude();
+        const lon = this.state.geolocation.getLongitude();
+        if (lat != null && lon != null && lat !== 0 && lon !== 0 && !this.state.latitude) {
+          const status = this.state.geolocation.getStatus();
+          const isEstimated = status === "V";
+          if (status === "A") {
+            this.applyGPSResult(lat, lon, false);
+          } else if (isEstimated && this.state.gpsText) {
+            this.state.gpsText.setProperty(hmUI.prop.TEXT, "Sinyal lemah, mencoba lokasi perkiraan...");
+          }
+        }
+      }, GPS_POLL_INTERVAL);
+
+      this.state.gpsTimeoutHandle = setTimeout(() => {
+        if (this.state.gpsCheckInterval) {
+          clearInterval(this.state.gpsCheckInterval);
+          this.state.gpsCheckInterval = null;
+        }
+        this.state.gpsTimeoutHandle = null;
+        if (this.state.latitude && this.state.longitude) return;
         const status = this.state.geolocation.getStatus();
         const lat = this.state.geolocation.getLatitude();
         const lon = this.state.geolocation.getLongitude();
-        
-        logger.debug(`GPS status: ${status}, lat: ${lat}, lon: ${lon}`);
-        
-        if (status === "A" && lat && lon && lat !== 0 && lon !== 0) {
-          this.state.latitude = lat.toFixed(6);
-          this.state.longitude = lon.toFixed(6);
-          
-          this.state.gpsText.setProperty(hmUI.prop.COLOR, 0x4caf50);
-          this.state.gpsText.setProperty(
-            hmUI.prop.TEXT, 
-            `${this.state.latitude}, ${this.state.longitude}`
-          );
-          
-          logger.debug(`GPS acquired: ${this.state.latitude}, ${this.state.longitude}`);
-          
+        if (lat != null && lon != null && lat !== 0 && lon !== 0) {
+          this.applyGPSResult(lat, lon, true);
+        } else {
           this.state.geolocation.stop();
-        } else if (status === "V") {
-          this.state.gpsText.setProperty(hmUI.prop.TEXT, "Mencari sinyal GPS...");
-        }
-      });
-      
-      setTimeout(() => {
-        if (!this.state.latitude && !this.state.longitude) {
-          const status = this.state.geolocation.getStatus();
-          const lat = this.state.geolocation.getLatitude();
-          const lon = this.state.geolocation.getLongitude();
-          
-          if (lat && lon && lat !== 0 && lon !== 0) {
-            this.state.latitude = lat.toFixed(6);
-            this.state.longitude = lon.toFixed(6);
-            this.state.gpsText.setProperty(hmUI.prop.COLOR, 0x4caf50);
-            this.state.gpsText.setProperty(
-              hmUI.prop.TEXT, 
-              `${this.state.latitude}, ${this.state.longitude}`
-            );
-            this.state.geolocation.stop();
-          } else {
+          if (this.state.gpsText) {
             this.state.gpsText.setProperty(hmUI.prop.COLOR, 0xff6b6b);
-            this.state.gpsText.setProperty(hmUI.prop.TEXT, "GPS timeout - coba di luar ruangan");
+            this.state.gpsText.setProperty(hmUI.prop.TEXT, "Timeout. Coba dekat jendela atau luar ruangan.");
           }
         }
-      }, 30000);
-      
+      }, GPS_TIMEOUT_MS);
+
     } catch (e) {
       logger.error("GPS error: " + e.message);
-      this.state.gpsText.setProperty(hmUI.prop.COLOR, 0xff6b6b);
-      this.state.gpsText.setProperty(hmUI.prop.TEXT, "Error: " + e.message);
+      this.stopGPSAndClearTimers();
+      if (this.state.gpsText) {
+        this.state.gpsText.setProperty(hmUI.prop.COLOR, 0xff6b6b);
+        this.state.gpsText.setProperty(hmUI.prop.TEXT, "Error: " + e.message);
+      }
     }
   },
 
   onDestroy() {
     logger.debug("page onDestroy invoked");
-    
     if (this.state.qrTimer) {
       clearInterval(this.state.qrTimer);
       this.state.qrTimer = null;
     }
-    
-    if (this.state.geolocation) {
-      this.state.geolocation.stop();
-      this.state.geolocation = null;
-    }
+    this.stopGPSAndClearTimers();
+    this.state.geolocation = null;
   },
 });

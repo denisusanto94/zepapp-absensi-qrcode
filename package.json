@@ -6,7 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "",
+  "author": "denisusanto94",
   "license": "ISC",
   "devDependencies": {
     "@zeppos/device-types": "^3.0.0"

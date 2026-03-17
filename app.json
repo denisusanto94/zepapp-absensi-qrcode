@@ -1,7 +1,8 @@
 {
   "configVersion": "v3",
   "app": {
-    "appId": 29080,
+    "appId": 1106743,
+    "developer": "denisusanto94",
     "appName": "Absensi QR",
     "appType": "app",
     "version": {
